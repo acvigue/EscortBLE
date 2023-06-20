@@ -1,5 +1,5 @@
 {
   "dependencies": {
-    "xtea": "^1.0.0"
+    "noble-mac": "https://github.com/Timeular/noble-mac.git"
   }
 }

@@ -1,19 +1,25 @@
 const noble = require('noble-mac');
-const xtea = require('xtea');
 
 const escortServiceUUID = ["B5E22DE9-31EE-42AB-BE6A-9BE0837AA344"]; // default: [] => all
 const escortSmartCordKey = [0xB67423AB, 0x7B7F599E, 0x831E63EB, 0x535C1285];
 
 noble.startScanning(escortServiceUUID, false, (err) => {
-    console.log(err);
-}); // particular UUID's
+    if(err) {
+        console.log(err);
+    }
+});
+
+noble.on('warning', function(message) {
+    console.warn(message)
+});
+noble.on('error', function(message) {
+    console.error(message)
+});
 
 let connectedPeripheral = null;
 let escortService = null;
 let txCharacteristic = null;
 let rxCharacteristic = null;
-
-let state = 0;
 
 noble.on('discover', peripheralDiscovered);
 
@@ -21,14 +27,19 @@ function peripheralDiscovered(peripheral) {
     console.log(`discovered ${peripheral.advertisement.localName}!`)
     connectedPeripheral = peripheral;
     peripheral.connect();
-    peripheral.on('connect', peripheralConnected);
-    peripheral.on('')
+    peripheral.once('connect', peripheralConnected);
+    peripheral.once('disconnect', peripheralDisconnected);
+}
+
+function peripheralDisconnected() {
+    console.log(`disconnected from ${connectedPeripheral.advertisement.localName}!`)
 }
 
 function peripheralConnected() {
     console.log(`connected to ${connectedPeripheral.advertisement.localName}!`)
     connectedPeripheral.once('servicesDiscover', peripheralServicesDiscovered)
     connectedPeripheral.discoverServices()
+    noble.stopScanning()
 }
 
 function peripheralServicesDiscovered(services) {
@@ -106,7 +117,7 @@ function handleCommand(command) {
             setInterval(() => {
                 write([0xF5, 0x01, 0x94])
             }, 5000)
-            write([0xF5, 0x00, 0x97])
+            write([0xF5, 0x01, 0x97])
             write([0xF5, 14, 0x90, ...generateAlert(80)])
         }
     }
@@ -219,5 +230,3 @@ function esc_unpack(vv) {
 
     return [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9];
 }
-
-console.log(generateAlert(80))
