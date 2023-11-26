@@ -4,15 +4,15 @@ const escortServiceUUID = ["B5E22DE9-31EE-42AB-BE6A-9BE0837AA344"]; // default: 
 const escortSmartCordKey = [0xB67423AB, 0x7B7F599E, 0x831E63EB, 0x535C1285];
 
 noble.startScanning(escortServiceUUID, false, (err) => {
-    if(err) {
+    if (err) {
         console.log(err);
     }
 });
 
-noble.on('warning', function(message) {
+noble.on('warning', function (message) {
     console.warn(message)
 });
-noble.on('error', function(message) {
+noble.on('error', function (message) {
     console.error(message)
 });
 
@@ -26,9 +26,9 @@ noble.on('discover', peripheralDiscovered);
 function peripheralDiscovered(peripheral) {
     console.log(`discovered ${peripheral.advertisement.localName}!`)
     connectedPeripheral = peripheral;
-    peripheral.connect();
     peripheral.once('connect', peripheralConnected);
     peripheral.once('disconnect', peripheralDisconnected);
+    peripheral.connect();
 }
 
 function peripheralDisconnected() {
@@ -73,6 +73,44 @@ function discoveredEscortCharacteristics(characteristics) {
     }
 }
 
+function displayLocation(type, distance, age, heading, database) {
+    /*
+    int i = heading & 255;
+    byte[] bArr = {(byte) (type & Byte.MAX_VALUE), (byte) ((((type & 128) >> 7) | (distance << 1)) & 127), (byte) ((distance >> 6) & 127), (byte) (((distance >> 13) | (i << 3)) & 127), (byte) ((((age & 3) << 5) | (i >> 4) | ((b & 1) << 4)) & 127)};
+    sendMessage(new byte[]{RadarInterface.DELIMITER, 6, RadarRequest.DISPLAY_LOCATION.value(), bArr[0], bArr[1], bArr[2], bArr[3], bArr[4]}, "displayLocation", false);
+    */
+
+    var bArr = new Array(5);
+    let i = heading & 255;
+    bArr[0] = (type & 0xFF);
+    bArr[1] = ((((type & 128) >> 7) | (distance << 1)) & 127);
+    bArr[2] = ((distance >> 6) & 127);
+    bArr[3] = (((distance >> 13) | (i << 3)) & 127);
+    bArr[4] = ((((age & 3) << 5) | (i >> 4) | ((database & 1) << 4)) & 127);
+    return bArr;
+}
+
+function headingCalculation(currentBearing, targetBearing) {
+    let d;
+    if (currentBearing <= targetBearing) {
+        let i = targetBearing - currentBearing;
+        if (Math.abs(i) <= 180) {
+            d = i;
+            if (d < 0) {
+                d += 360;
+            }
+            if (d < 0) {
+                d += 360;
+            }
+            return (d / 2.0);
+        }
+        targetBearing -= 360;
+    }
+    d = targetBearing - currentBearing;
+
+    return (d / 2.0);
+}
+
 async function enterEventLoop() {
     await unlockDevice()
 }
@@ -95,6 +133,14 @@ function displayText(text) {
     write(txPacket);
 }
 
+function numberToBytes(num) {
+
+    let andData = (Math.pow(2.0, 7)) - 1;
+    let byteData0 = (num & andData);
+    let byteData1 = (num >> 7);
+    return [byteData0, byteData1];
+}
+
 function handleCommand(command) {
     const cmdLen = command.length;
     const cmdType = command[0];
@@ -102,7 +148,9 @@ function handleCommand(command) {
 
     //Authentication request
     if (cmdType == 0xA1) {
+        console.log(cmdData);
         const authResponse = esc_unpack(xtea_encrypt(35, esc_pack(cmdData), escortSmartCordKey));
+        console.log(authResponse);
         const authResponsePacket = [0xF5, authResponse.length + 1, 0xA4, ...[...authResponse]]
         write(authResponsePacket)
     }
@@ -114,11 +162,15 @@ function handleCommand(command) {
             console.log('Radar Unlock Attempts Exceeded')
         } else {
             console.log('Radar Unlocked!')
+            write([0xF5, 6, 0xAD, ...[134, 105, 7, 104, 82]])
             setInterval(() => {
-                write([0xF5, 0x01, 0x94])
-            }, 5000)
+                //write([0xF5, 0x01, 0x94])
+                //write([0xF5, 0x03, 0xA9, ...numberToBytes(45)])
+                //write([0xF5, 0x01, 0xAE]);
+                write([0xF5, 0x02, 0x9E, 0x01]);
+            }, 2000)
             write([0xF5, 0x01, 0x97])
-            write([0xF5, 14, 0x90, ...generateAlert(80)])
+            //write([0xF5, 14, 0x90, ...generateAlert(80)])
         }
     }
 
@@ -126,10 +178,15 @@ function handleCommand(command) {
     else if (cmdType == 0xA6) {
         if (cmdData[0] == 1) {
             //send speed limit (45)
-            write([0xF5, 0x02, 0xA9, 45])
+            //write([0xF5, 0x02, 0xA9, 45])
+            //write([0xF5, 0x03, 0x83, 0x16, 0])
+            //write([0xF5, 0x03, 0xAA, 0x00, 0x28])
+
+            //F503831600
         } else if (cmdData[0] == 2) {
+            console.log("curr Speed", command)
             //send current speed (MPH) not working
-            write([0xF5, 0x03, 0xAA, 0, 40])
+            //write([0xF5, 0x03, 0xAA, 0x28, 0x00])
         }
     }
 
@@ -141,7 +198,7 @@ function handleCommand(command) {
 
     //Radar alert packet
     else if (cmdType == 0xA9) {
-        if(cmdData.length > 0) {
+        if (cmdData.length > 0) {
             console.log(`alert packet: ${toHexString(cmdData)}`);
         }
     }
@@ -202,11 +259,6 @@ function xtea_encrypt(num_rounds, v, key) {
     return [v0, v1];
 }
 
-function generateAlert(type) {
-    const bArr = [80, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64]
-    return bArr;
-}
-
 function esc_pack(esc_req) {
     const v0 = esc_req[0] & 0x7F | (esc_req[1] & 0x7F) << 7 | (esc_req[2] & 0x7F) << 14 | (esc_req[3] & 0x7F) << 21 | (esc_req[4] & 0xF) << 28;
     const v1 = (esc_req[4] & 0x70) >> 4 | (esc_req[5] & 0x7F) << 3 | (esc_req[6] & 0x7F) << 10 | (esc_req[7] & 0x7F) << 17 | (esc_req[8] & 0x7F) << 24 | (esc_req[9] & 0x1) << 31;
@@ -229,4 +281,14 @@ function esc_unpack(vv) {
     const b9 = (v1 >>> 31 & 0x1);
 
     return [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9];
+}
+
+function bytesToHex(bytes) {
+    let hex = [];
+    for (let i = 0; i < bytes.length; i++) {
+        let current = bytes[i] < 0 ? bytes[i] + 256 : bytes[i];
+        hex.push((current >>> 4).toString(16));
+        hex.push((current & 0xF).toString(16));
+    }
+    return hex.join("");
 }
